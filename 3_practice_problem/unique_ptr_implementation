@@ -1,0 +1,141 @@
+Implementing a custom std::unique_ptr is a classic system-level C++ exercise. It demonstrates a deep understanding of RAII (Resource Acquisition Is Initialization), move semantics, and Rule of Five memory management.
+
+Here is a production-ready, interview-grade implementation of a custom unique_ptr.
+
+The Core Principles
+To make this work, the class must enforce exclusive ownership:
+
+No Copying: We must explicitly delete the copy constructor and copy assignment operator.
+
+Move Semantics: We must implement the move constructor and move assignment operator to transfer the internal pointer and nullify the source.
+
+RAII: The destructor must automatically clean up the memory.
+
+C++ Implementation
+C++
+#include <iostream>
+#include <utility> // for std::exchange
+
+template <typename T>
+class UniquePtr {
+private:
+    T* ptr_;
+
+public:
+    // 1. Default Constructor
+    constexpr UniquePtr() noexcept : ptr_(nullptr) {}
+
+    // 2. Explicit Constructor (prevents implicit conversions like UniquePtr<int> p = new int)
+    explicit UniquePtr(T* p) noexcept : ptr_(p) {}
+
+    // 3. Destructor (RAII)
+    ~UniquePtr() {
+        delete ptr_;
+    }
+
+    // 4. Delete Copy Constructor and Copy Assignment
+    // This enforces exclusive ownership. You cannot copy a unique_ptr.
+    UniquePtr(const UniquePtr&) = delete;
+    UniquePtr& operator=(const UniquePtr&) = delete;
+
+    // 5. Move Constructor
+    // Transfer ownership from 'other' to 'this', then nullify 'other'
+    UniquePtr(UniquePtr&& other) noexcept : ptr_(other.ptr_) {
+        other.ptr_ = nullptr;
+    }
+
+    // 6. Move Assignment Operator
+    UniquePtr& operator=(UniquePtr&& other) noexcept {
+        // Prevent self-assignment (e.g., p = std::move(p))
+        if (this != &other) {
+            delete ptr_;             // Clean up our current resource
+            ptr_ = other.ptr_;       // Take ownership
+            other.ptr_ = nullptr;    // Nullify the source
+        }
+        return *this;
+    }
+
+    // --- Observers ---
+
+    // Return the raw pointer
+    T* get() const noexcept {
+        return ptr_;
+    }
+
+    // Dereference operator
+    T& operator*() const {
+        return *ptr_;
+    }
+
+    // Member access operator
+    T* operator->() const noexcept {
+        return ptr_;
+    }
+
+    // Boolean conversion to check if it holds a valid pointer (e.g., if (ptr) { ... })
+    explicit operator bool() const noexcept {
+        return ptr_ != nullptr;
+    }
+
+    // --- Modifiers ---
+
+    // Relinquish ownership and return the raw pointer. 
+    // The caller is now responsible for deleting it.
+    T* release() noexcept {
+        T* temp = ptr_;
+        ptr_ = nullptr;
+        return temp;
+        // In C++14/17, you can write this as a one-liner:
+        // return std::exchange(ptr_, nullptr);
+    }
+
+    // Destroy the current object and take ownership of a new one.
+    void reset(T* p = nullptr) noexcept {
+        T* old_ptr = ptr_;
+        ptr_ = p;        // Update internal pointer FIRST
+        delete old_ptr;  // Delete old pointer LAST to be exception-safe
+    }
+};
+Usage Example
+Here is how you would use it in practice, proving that the RAII and Move mechanics work as expected:
+
+C++
+class Resource {
+public:
+    Resource() { std::cout << "Resource Acquired\n"; }
+    ~Resource() { std::cout << "Resource Destroyed\n"; }
+    void doSomething() { std::cout << "Doing something...\n"; }
+};
+
+int main() {
+    std::cout << "--- 1. Creating ptr1 ---\n";
+    UniquePtr<Resource> ptr1(new Resource());
+    
+    if (ptr1) {
+        ptr1->doSomething();
+    }
+
+    std::cout << "\n--- 2. Moving ptr1 to ptr2 ---\n";
+    // UniquePtr<Resource> ptr2 = ptr1; // ERROR: Call to deleted copy constructor
+    UniquePtr<Resource> ptr2 = std::move(ptr1); // SUCCESS: Ownership transferred
+    
+    if (!ptr1) {
+        std::cout << "ptr1 is now null.\n";
+    }
+    ptr2->doSomething();
+
+    std::cout << "\n--- 3. End of scope ---\n";
+    // ptr2 goes out of scope and automatically deletes the Resource.
+    return 0;
+}
+What makes this "Production Grade"?
+While this captures the core mechanics of std::unique_ptr, a senior C++ engineer should be aware of what is missing in this simplified version compared to the standard library:
+
+Custom Deleters: The real std::unique_ptr has a second template parameter: template <typename T, typename Deleter = std::default_delete<T>>. This allows you to provide custom cleanup functions (e.g., fclose for a file pointer, or a custom memory pool release).
+
+Empty Base Class Optimization (EBCO): To support Custom Deleters without increasing the size of the unique_ptr object (a raw pointer is 8 bytes; unique_ptr should also be exactly 8 bytes), the standard library uses EBCO or [[no_unique_address]] in C++20.
+
+Array Specialization: The standard provides a template specialization for arrays (std::unique_ptr<T[]>), which correctly calls delete[] instead of delete and provides operator[].
+
+std::make_unique: You would typically implement a variadic template function MakeUnique<T>(Args&&... args) to safely construct the object and wrap it in the pointer, preventing memory leaks if an exception is thrown during argument evaluation.
+
